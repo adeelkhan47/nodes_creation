@@ -7,6 +7,7 @@ The text is saved for the node which is selected in the dropdown menu.
 and not for the node from which I just display the description. 
 
 """
+import datetime
 import json  # load json data from website
 
 import dash_cytoscape as cyto  # show graph
@@ -47,7 +48,6 @@ table["athID"] = table.index
 # Create list with all athletheIDs
 athlethe_names = table['athID'].to_list()
 
-
 # Nodes to begin with.
 # Node format is used by default in dash_cytoscape network
 # = [{'data': {'id': 'everybody', 'label': '[1000, 1027, ...]'}}]
@@ -87,6 +87,12 @@ network_stylesheet = [
         }
     }
 ]
+
+
+def set_logs(text):
+    current_datetime = datetime.datetime.now()
+    time_ = current_datetime.strftime('%Y-%m-%d %H:%M:%S')
+    database.add_logs(f'{time_}  {text}')
 
 
 # Define style for testID buttons
@@ -209,18 +215,123 @@ app.layout = html.Div([
     )])
 
 
-@callback(Output('node-description-output', 'children'),
-          Input('network', 'tapNodeData'))
-def displayTapNodeData(data):
-    """Shows All Athletes of the network node
-    When a node in the network is pressed, displayTapNodeData is called with
-    the node data and all athletes of the node are displayed in the
-    node-description-output element.
+def update_app_layout():
+    global app
+    app.layout = app.layout = html.Div([
 
-    """
-    if data:
-        # data['label'] stores all athletes of this node
-        return "Node description: " + data['label']
+        html.H1("Athletic Data Analysis"),
+
+        dash_table.DataTable(
+            # Expects list of dicts
+            # Data for the table.
+            # From each row of my PivotTable (i.e. each athlete) a separate
+            # dictionary is created with the testIDs as keys
+            data=table.to_dict('records'),
+            # The i in the columns (testID) is used both as column header and ID
+            columns=[{'name': i, 'id': i} for i in table.columns],
+            page_size=5,
+            id='data',
+            style_header={
+                'backgroundColor': 'rgb(30, 30, 30)',
+                'color': 'white'
+            },
+            style_data={
+                'backgroundColor': 'grey',
+                'color': 'white'
+            },
+        ),
+
+        # Div contains Threshold-menu, Note-selection-menu, Node-buttons on the
+        # left side and Recommendations on the right side.
+        html.Div([
+            # store Threshold-Menu, Note-selection-menu, node-buttons
+            html.Div
+                (children=[
+
+                # User input Threshold
+                html.Label("Threshold: "),
+                dcc.Input(id='threshold', type='number', min=1, max=10),
+
+                # Leerzeile
+                html.Br(),
+                html.Br(),
+
+                # Node selection drop-down menu
+                html.Label("Please select a node: "),
+                # takes options (a list with all elements that are displayed) and
+                # value (default element) as input
+                dcc.Dropdown(id="nodes-dropdown"),
+
+                # Creates buttons for each column index of the pivottable
+                # Omit the column with athletheID
+                # the id of each node is: "str(i)) for i in table.columns " !!
+                html.Div(
+
+                    children=[
+                        html.Button(style=testID_buttons_style(), children=f"{i}",
+                                    id=str(i)) for i in table.columns if
+                        i != 'athID'], style={'align-items': 'center'}
+                ),
+
+                html.Br(),
+            ],
+                style={'width': '45%', 'display': 'inline-block'}),
+
+            # write/store Recommendations
+            html.Div(children=[
+
+                html.Button('Save Recommendations', id='save-text'),
+
+                html.Br(),
+
+                dcc.Textarea(
+                    id='text',
+                    value='',
+                    style={'width': 400, 'height': 100},
+                ),
+
+                # This only exists because callback requires an output, but
+                #  nothing is displayed with it (update_text() always returns "")
+                html.Div(id='hidden-div', children="test")
+            ],
+
+                style={'width': '45%', 'display': 'inline-block',
+                       'float': 'right'}),
+        ]),
+
+        # Display the node description that was selected
+        html.Div(id='node-description-output'),
+
+        html.Br(),
+
+        # Network
+        cyto.Cytoscape(
+            id='network',
+            # bsp node = {'data': {'id': 'one', 'label': 'Node 1'}
+            # edge = {'data': {'source': 'one', 'target': 'two', 'label': 'text'}}
+            # node has 'id' and edge has 'source' and 'target'
+            # at beginning:
+            # node = [{'data': {'id': 'everybody', 'label': '[1000, 1027, ...]'}}]
+            # edges = []
+            elements=database.get_nodes() + database.get_edges(),
+            style={'width': '100%', 'height': '500px'},
+            layout={'name': 'dagre', 'animate': True},  # evtl 'locked'=True
+            stylesheet=network_stylesheet
+        )])
+
+    @callback(Output('node-description-output', 'children'),
+
+              Input('network', 'tapNodeData'))
+    def displayTapNodeData(data):
+        """Shows All Athletes of the network node
+        When a node in the network is pressed, displayTapNodeData is called with
+        the node data and all athletes of the node are displayed in the
+        node-description-output element.
+
+        """
+        if data:
+            # data['label'] stores all athletes of this node
+            return "Node description: " + data['label']
 
 
 # Drop down list box - only nodes without a successor, pre-select the first one
@@ -260,6 +371,7 @@ def get_end_nodes(*args):
             end_nodes.append(n['data']['id'])
     # value is the default node that is displayed in the dropdown menu
     value = end_nodes[0]
+
     return end_nodes, value
 
 
@@ -267,55 +379,39 @@ def get_end_nodes(*args):
 
 @callback(Output('network', 'elements'),
           [Input(str(i), "n_clicks") for i in table.columns if i != 'athID'],
-          # Hier werden jetzt die Buttons abgefragt!! Auf id achten
           State('network', 'elements'),
           State('threshold', 'value'),
           State("nodes-dropdown", "value"))
 def update_elements(*args):
-    """Functions updates the nodes + edges
-    Called when one of the node buttons is pressed.
-    Takes in addition to the button the current state of the network elements,
-    the Treshold Value and the selected node (nodes-dropdown value) as input.
-
-    """
     global counter
-    # bsp callback_context.triggered = [{'prop_id': '714.n_clicks', 'value': 1}]
-    # value increases with each click
-    # get the testID
-    cur_testID = callback_context.triggered[0]["prop_id"].split(".")[0]
-    # at this postions of the input the elements are stored
+    ctx = callback_context
+    cur_testID = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
     elements = args[len(table.columns) - 1]
-    nodes = [item for item in elements if next(iter(item['data'])) == "id"]
-    edges = [item for item in elements if next(iter(item['data'])) == "source"]
+    nodes = database.get_nodes()
+    edges = database.get_edges()
     threshold = args[len(table.columns)]
+    topnode = str(args[len(table.columns) + 1])
 
-    # number outside the threshold limits (1,10) is automatically None
-    if cur_testID != '' and threshold != None:
+    # If it is the first run or a button was clicked
+    if ctx.triggered or cur_testID == None:
         counter = counter + 1
-        # topnode is the node to which the treshold is applied
-        topnode = str(args[len(table.columns) + 1])
-        # At the label postion of each node I always store all contained
-        # athleths Now I want to get all athlete that my topnode contains
-        atleths = \
-            [item for item in nodes if item["data"]["id"] == topnode][0][
-                "data"][
-                "label"]
-        # Select only the relevant athletes in the table
-        df_ath = table.loc[json.loads(atleths)]
-        # Only the relevant TestID
-        df_ath = (df_ath[cur_testID])
-        # Get and add the new nodes and edges
-        nodes1, edges1 = data_split(df_ath, cur_testID, threshold, topnode,
-                                    counter)
+        if cur_testID != '' and threshold != None:
+            atleths = [item for item in nodes if item["data"]["id"] == topnode][0]["data"]["label"]
+            df_ath = table.loc[json.loads(atleths)]
+            df_ath = (df_ath[cur_testID])
+            nodes1, edges1 = data_split(df_ath, cur_testID, threshold, topnode, counter)
+            set_logs(f"New nodes created for {topnode} with threshold = {threshold} and counter is = {counter}")
+            edges.extend(edges1)
+            nodes.extend(nodes1)
+            for each in edges1:
+                database.add_edges(each)
+            for each in nodes1:
+                database.add_nodes(each)
 
-        edges.extend(edges1)
-        nodes.extend(nodes1)
-        for each in edges1:
-            database.add_edges(each)
-        for each in nodes1:
-            database.add_nodes(each)
-    # return the new elements to the network
-    return edges + nodes
+        if threshold:
+            database.add_threshold(threshold)
+        update_app_layout()
+        return edges + nodes
 
 
 def data_split(athl, testID, threshold, topnode, cur_counter):
@@ -372,6 +468,8 @@ def update_text(*args):
     if args[2] != None:
         # store the text for the node in the dictionary
         recommendations[args[2]] = args[1]
+        database.add_recommendations(args[1], args[2])
+        set_logs(f"Recommendation set for node = {args[2]} is  {args[1]}")
     # have to retrun something
     return ''
 
@@ -383,10 +481,14 @@ def load_recommendations(id):
     When a node is selected in the dropdown menu, the matching text is displayed
     """
     try:
-        text = recommendations[id]
+        text = database.get_recommendations(id)
+        set_logs(f"Recommendation for node = {id} ")
     except:
         text = ''
+    if text is None:
+        return ""
     return text
+
 
 # Run the app
 if __name__ == '__main__':

@@ -53,7 +53,8 @@ cur.execute("""
 cur.execute("""
     CREATE TABLE recommendations (
         id SERIAL PRIMARY KEY,
-        data INTEGER 
+        data VARCHAR (1000),
+        node_name VARCHAR (255)
     )
 """)
 
@@ -72,6 +73,7 @@ cur.execute("""
         data JSONB 
     )
 """)
+
 conn.commit()
 # Website-url
 url = "https://inprove-sport.info/csv/getInproveDemo/hgnxjgTyrkCvdR"

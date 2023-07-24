@@ -1,5 +1,7 @@
-import psycopg2
 import json
+
+import psycopg2
+
 
 class DatabaseService:
     def __init__(self, dbname, user, password, host='localhost', port='5432'):
@@ -30,13 +32,38 @@ class DatabaseService:
         self.cur.execute("SELECT data FROM edges")
         return [record[0] for record in self.cur.fetchall()]
 
-    def add_thresholds(self, data):
-        self.cur.execute("INSERT INTO thresholds (data) VALUES (%s)", (json.dumps(data),))
+    def add_threshold(self, data):
+        self.cur.execute("SELECT * FROM threshold")
+        if self.cur.fetchone() is None:
+            self.cur.execute("INSERT INTO threshold (data) VALUES (%s)", (json.dumps(data),))
+        else:
+            self.cur.execute("UPDATE threshold SET data = %s", (json.dumps(data),))
         self.conn.commit()
 
-    def get_thresholds(self):
-        self.cur.execute("SELECT data FROM thresholds")
-        return [record[0] for record in self.cur.fetchall()]
+    def get_threshold(self):
+        self.cur.execute("SELECT data FROM threshold LIMIT 1")
+        result = self.cur.fetchone()
+        return result[0] if result else None
+
+    def add_recommendations(self, data, node_name):
+        self.cur.execute("SELECT * FROM recommendations WHERE node_name = %s", (node_name,))
+        if self.cur.fetchone() is None:
+            self.cur.execute("""
+                INSERT INTO recommendations (data, node_name) 
+                VALUES (%s, %s)""",
+                             (data, node_name))
+        else:
+            self.cur.execute("""
+                UPDATE recommendations 
+                SET data = %s
+                WHERE node_name = %s""",
+                             (data, node_name))
+        self.conn.commit()
+
+    def get_recommendations(self, node_name):
+        self.cur.execute("SELECT data FROM recommendations WHERE node_name = %s", (node_name,))
+        result = self.cur.fetchone()
+        return result[0] if result else None
 
     def add_logs(self, data):
         self.cur.execute("INSERT INTO logs (data) VALUES (%s)", (json.dumps(data),))
